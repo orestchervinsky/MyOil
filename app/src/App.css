@@ -72,6 +72,17 @@ header h1 {
   gap: 12px;
 }
 
+.worker-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.worker-actions button {
+  flex: 1;
+  padding: 10px;
+}
+
 .worker {
   border: 1px solid #333;
   border-radius: 10px;
