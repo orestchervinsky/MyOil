@@ -99,10 +99,20 @@ function App() {
     setTelegramStatus('checking')
     supabase.functions
       .invoke('telegram-auth', { body: { initData } })
-      .then(({ data, error }) => {
+      .then(async ({ data, error }) => {
         if (error) {
+          let detail = error.message
+          const ctx = (error as { context?: Response }).context
+          if (ctx && typeof ctx.json === 'function') {
+            try {
+              const body = await ctx.json()
+              if (body?.error) detail = body.error
+            } catch {
+              // response body wasn't JSON — keep the generic message
+            }
+          }
           setTelegramStatus('error')
-          setTelegramError(error.message)
+          setTelegramError(detail)
           return
         }
         setTelegramPlayer(data.player)
