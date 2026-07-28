@@ -52,8 +52,20 @@ function makeWorkers(): Worker[] {
   }))
 }
 
+interface TelegramPlayer {
+  id: string
+  telegram_id: number
+  username: string | null
+  token_balance: number
+}
+
+type TelegramAuthStatus = 'not-in-telegram' | 'checking' | 'ok' | 'error'
+
 function App() {
   const [supabaseStatus, setSupabaseStatus] = useState<'checking' | 'ok' | 'error'>('checking')
+  const [telegramStatus, setTelegramStatus] = useState<TelegramAuthStatus>('checking')
+  const [telegramPlayer, setTelegramPlayer] = useState<TelegramPlayer | null>(null)
+  const [telegramError, setTelegramError] = useState('')
 
   const [workers, setWorkers] = useState<Worker[]>(makeWorkers)
   const [field, setField] = useState<Field>({
@@ -74,6 +86,32 @@ function App() {
       .getSession()
       .then(({ error }) => setSupabaseStatus(error ? 'error' : 'ok'))
       .catch(() => setSupabaseStatus('error'))
+  }, [])
+
+  useEffect(() => {
+    const tg = window.Telegram?.WebApp
+    tg?.ready()
+    const initData = tg?.initData
+    if (!initData) {
+      setTelegramStatus('not-in-telegram')
+      return
+    }
+    setTelegramStatus('checking')
+    supabase.functions
+      .invoke('telegram-auth', { body: { initData } })
+      .then(({ data, error }) => {
+        if (error) {
+          setTelegramStatus('error')
+          setTelegramError(error.message)
+          return
+        }
+        setTelegramPlayer(data.player)
+        setTelegramStatus('ok')
+      })
+      .catch((err) => {
+        setTelegramStatus('error')
+        setTelegramError(String(err))
+      })
   }, [])
 
   // Lazy-check timer tick: resolve any worker whose busyUntil has passed —
@@ -173,6 +211,18 @@ function App() {
           Supabase: {supabaseStatus === 'checking' ? '…' : supabaseStatus === 'ok' ? 'ok' : 'error'}
         </span>
       </header>
+
+      <section className="card">
+        <h2>Telegram-автентифікація</h2>
+        {telegramStatus === 'not-in-telegram' && <p>Відкрито поза Telegram — initData відсутня.</p>}
+        {telegramStatus === 'checking' && <p>Перевіряю initData…</p>}
+        {telegramStatus === 'error' && <p className="warn">Помилка: {telegramError}</p>}
+        {telegramStatus === 'ok' && telegramPlayer && (
+          <p>
+            ✅ Гравець #{telegramPlayer.telegram_id} ({telegramPlayer.username ?? 'без імені'}), id в БД: {telegramPlayer.id}
+          </p>
+        )}
+      </section>
 
       <section className="balances">
         <div>💰 {tokenBalance} токенів</div>
