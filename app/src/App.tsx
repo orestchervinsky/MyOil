@@ -213,7 +213,12 @@ function App() {
             <div className="map-grid">
               {Array.from({ length: MAP_TILE_COUNT }, (_, i) => {
                 const b = BUILDINGS[i]
-                if (!b) return <div key={`empty-${i}`} className="tile empty" />
+                if (!b)
+                  return (
+                    <div key={`empty-${i}`} className="tile empty">
+                      <div className="tile-block" />
+                    </div>
+                  )
 
                 const cond =
                   b.key === 'field'
@@ -232,8 +237,11 @@ function App() {
                     className={`tile building ${cond !== null ? conditionClass(cond) : ''}`}
                     onClick={() => setSelectedBuilding(b.key)}
                   >
-                    <span className="tile-icon">{b.icon}</span>
-                    <span className="tile-label">{b.label}</span>
+                    <div className="tile-block" />
+                    <div className="tile-content">
+                      <span className="tile-icon">{b.icon}</span>
+                      <span className="tile-label">{b.label}</span>
+                    </div>
                     {b.key === 'warehouse' && <span className="tile-badge">{state.field.stockpile}</span>}
                     {b.key === 'field' && state.field.reserve_remaining <= 0 && (
                       <span className="tile-badge warn">0</span>
