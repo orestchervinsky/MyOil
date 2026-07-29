@@ -115,7 +115,7 @@ Deno.serve(async (req) => {
     .from('workers')
     .select('*')
     .eq('player_id', player.id)
-    .order('created_at')
+    .order('position')
   const { data: field } = await supabase.from('oil_fields').select('*').eq('owner_id', player.id).single()
   const { data: refinery } = await supabase.from('refineries').select('*').eq('owner_id', player.id).single()
 
@@ -254,7 +254,7 @@ Deno.serve(async (req) => {
     .from('workers')
     .select('*')
     .eq('player_id', player.id)
-    .order('created_at')
+    .order('position')
   const { data: freshField } = await supabase.from('oil_fields').select('*').eq('owner_id', player.id).single()
   const { data: freshRefinery } = await supabase.from('refineries').select('*').eq('owner_id', player.id).single()
 

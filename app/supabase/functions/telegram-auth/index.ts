@@ -127,7 +127,7 @@ Deno.serve(async (req) => {
 
   if (claimedOnboarding) {
     await supabase.from('workers').insert(
-      Array.from({ length: 4 }, () => ({ player_id: player.id })),
+      Array.from({ length: 4 }, (_, i) => ({ player_id: player.id, position: i })),
     )
 
     const reserve = Math.floor(500 + Math.random() * 1500)
