@@ -51,10 +51,28 @@ interface GameState {
 }
 
 type Status = 'not-in-telegram' | 'loading' | 'ready' | 'error'
+type Action = 'sync' | 'extract' | 'transport' | 'refine' | 'produce_parts' | 'sell'
+type BuildingKey = 'field' | 'refinery' | 'transport' | 'warehouse' | 'bank' | 'partsFactory'
+
+const BUILDINGS: { key: BuildingKey; icon: string; label: string }[] = [
+  { key: 'field', icon: '🛢️', label: 'Родовище' },
+  { key: 'refinery', icon: '🏭', label: 'НПЗ' },
+  { key: 'transport', icon: '🚚', label: 'Транспорт' },
+  { key: 'warehouse', icon: '📦', label: 'Склад' },
+  { key: 'bank', icon: '🏦', label: 'Банк' },
+  { key: 'partsFactory', icon: '🔧', label: 'Завод деталей' },
+]
+const MAP_TILE_COUNT = 9
 
 function fuelPrice(fuelBalance: number): number {
   const base = 50
   return Math.max(5, Math.round(base / (1 + fuelBalance * 0.05)))
+}
+
+function conditionClass(condition: number): string {
+  if (condition >= 60) return 'good'
+  if (condition >= 30) return 'worn'
+  return 'bad'
 }
 
 async function errorDetail(error: unknown): Promise<string> {
@@ -77,6 +95,7 @@ function App() {
   const [log, setLog] = useState<string[]>([])
   const [now, setNow] = useState(Date.now())
   const [busy, setBusy] = useState(false)
+  const [selectedBuilding, setSelectedBuilding] = useState<BuildingKey | null>(null)
 
   const initDataRef = useRef<string | null>(null)
 
@@ -85,10 +104,7 @@ function App() {
   }, [])
 
   const callGameAction = useCallback(
-    async (
-      action: 'sync' | 'extract' | 'transport' | 'refine' | 'produce_parts' | 'sell',
-      workerId?: string,
-    ) => {
+    async (action: Action, workerId?: string) => {
       if (!initDataRef.current) return
       setBusy(true)
       const { data, error } = await supabase.functions.invoke('game-action', {
@@ -150,6 +166,18 @@ function App() {
     }
   }, [now, state, busy, callGameAction])
 
+  function runOnWorker(action: Action, workerId: string) {
+    callGameAction(action, workerId)
+    setSelectedBuilding(null)
+  }
+
+  function requestMarket(buildingLabel: string) {
+    addLog(`Заявку на ринок для "${buildingLabel}" ще не реалізовано — скоро.`)
+    setSelectedBuilding(null)
+  }
+
+  const idleWorkers = state?.workers.filter((w) => w.status === 'idle') ?? []
+
   return (
     <div className="game">
       <header>
@@ -175,94 +203,190 @@ function App() {
       {status === 'ready' && state && (
         <>
           <section className="balances">
-            <div>💰 {state.player.token_balance} токенів</div>
-            <div>🛢️ {state.player.oil_balance} нафти</div>
-            <div>⛽ {state.player.fuel_balance} палива</div>
-            <div>🔧 {state.player.parts_balance} деталей</div>
+            <div>💰 {state.player.token_balance}</div>
+            <div>🛢️ {state.player.oil_balance}</div>
+            <div>⛽ {state.player.fuel_balance}</div>
+            <div>🔧 {state.player.parts_balance}</div>
           </section>
 
-          <section className="card">
-            <h2>Родовище</h2>
-            <p>
-              Резерв: {state.field.reserve_remaining} / {state.field.reserve_total}
-            </p>
-            <p>
-              Рівень качки: {state.field.pump_level} · Цілісність: {state.field.condition}%
-            </p>
-            <p>Видобуто, чекає на перевезення: {state.field.stockpile}</p>
-            {state.field.reserve_remaining <= 0 && <p className="warn">Виснажене</p>}
-          </section>
+          <div className="map-viewport">
+            <div className="map-grid">
+              {Array.from({ length: MAP_TILE_COUNT }, (_, i) => {
+                const b = BUILDINGS[i]
+                if (!b) return <div key={`empty-${i}`} className="tile empty" />
 
-          <section className="card">
-            <h2>Транспорт</h2>
-            <p>
-              Рівень: {state.transport.level} · Цілісність: {state.transport.condition}%
-            </p>
-          </section>
+                const cond =
+                  b.key === 'field'
+                    ? state.field.condition
+                    : b.key === 'refinery'
+                      ? state.refinery.condition
+                      : b.key === 'transport'
+                        ? state.transport.condition
+                        : b.key === 'partsFactory'
+                          ? state.partsFactory.condition
+                          : null
 
-          <section className="card">
-            <h2>Завод деталей</h2>
-            <p>
-              Рівень: {state.partsFactory.level} · Цілісність: {state.partsFactory.condition}%
-            </p>
-            <p>Виробництво: 50 токенів → 5 деталей</p>
-          </section>
-
-          <section className="card">
-            <h2>НПЗ</h2>
-            <p>
-              Рівень: {state.refinery.level} · Цілісність: {state.refinery.condition}%
-            </p>
-            <p>Курс палива зараз: {fuelPrice(state.player.fuel_balance)} токенів/од.</p>
-            <button disabled={busy || state.player.fuel_balance <= 0} onClick={() => callGameAction('sell')}>
-              Продати все паливо НПС
-            </button>
-          </section>
-
-          <section className="card">
-            <h2>Робочі</h2>
-            <div className="workers">
-              {state.workers.map((w, i) => {
-                const busyUntilMs = w.busy_until ? new Date(w.busy_until).getTime() : null
-                const secondsLeft = busyUntilMs ? Math.max(0, Math.ceil((busyUntilMs - now) / 1000)) : 0
-                const idle = w.status === 'idle'
                 return (
-                  <div key={w.id} className={`worker ${w.status}`}>
-                    <strong>Робочий {i + 1}</strong>
-                    <p>
-                      {w.status === 'idle' && 'вільний'}
-                      {w.status === 'working' && `працює (${secondsLeft}с)`}
-                      {w.status === 'resting' && `відпочиває (${secondsLeft}с)`}
-                    </p>
-                    <button
-                      disabled={busy || !idle || state.field.reserve_remaining <= 0}
-                      onClick={() => callGameAction('extract', w.id)}
-                    >
-                      Видобуток
-                    </button>
-                    <button
-                      disabled={busy || !idle || state.field.stockpile <= 0}
-                      onClick={() => callGameAction('transport', w.id)}
-                    >
-                      Перевезти
-                    </button>
-                    <button
-                      disabled={busy || !idle || state.player.oil_balance <= 0}
-                      onClick={() => callGameAction('refine', w.id)}
-                    >
-                      Переробка
-                    </button>
-                    <button
-                      disabled={busy || !idle || state.player.token_balance < 50}
-                      onClick={() => callGameAction('produce_parts', w.id)}
-                    >
-                      Деталі
-                    </button>
-                  </div>
+                  <button
+                    key={b.key}
+                    className={`tile building ${cond !== null ? conditionClass(cond) : ''}`}
+                    onClick={() => setSelectedBuilding(b.key)}
+                  >
+                    <span className="tile-icon">{b.icon}</span>
+                    <span className="tile-label">{b.label}</span>
+                    {b.key === 'warehouse' && <span className="tile-badge">{state.field.stockpile}</span>}
+                    {b.key === 'field' && state.field.reserve_remaining <= 0 && (
+                      <span className="tile-badge warn">0</span>
+                    )}
+                  </button>
                 )
               })}
             </div>
-          </section>
+          </div>
+
+          <div className="worker-tray">
+            {state.workers.map((w, i) => {
+              const busyUntilMs = w.busy_until ? new Date(w.busy_until).getTime() : null
+              const secondsLeft = busyUntilMs ? Math.max(0, Math.ceil((busyUntilMs - now) / 1000)) : 0
+              return (
+                <div key={w.id} className={`worker-chip ${w.status}`} title={`Робочий ${i + 1}: ${w.status}`}>
+                  <span className="worker-chip-icon">👷</span>
+                  {w.status !== 'idle' && <span className="worker-chip-timer">{secondsLeft}с</span>}
+                </div>
+              )
+            })}
+          </div>
+
+          {selectedBuilding && (
+            <div className="modal-backdrop" onClick={() => setSelectedBuilding(null)}>
+              <div className="modal" onClick={(e) => e.stopPropagation()}>
+                {selectedBuilding === 'field' && (
+                  <>
+                    <h2>🛢️ Родовище</h2>
+                    <p>
+                      Резерв: {state.field.reserve_remaining} / {state.field.reserve_total} · Цілісність:{' '}
+                      {state.field.condition}%
+                    </p>
+                    <p className="modal-hint">Оберіть робочого для видобутку:</p>
+                    <div className="worker-picker">
+                      {idleWorkers.length === 0 && <p className="warn">Немає вільних робочих</p>}
+                      {idleWorkers.map((w) => (
+                        <button
+                          key={w.id}
+                          disabled={busy || state.field.reserve_remaining <= 0}
+                          onClick={() => runOnWorker('extract', w.id)}
+                        >
+                          Робочий {state.workers.indexOf(w) + 1}
+                        </button>
+                      ))}
+                    </div>
+                    <button className="market-btn" onClick={() => requestMarket('Родовище')}>
+                      Подати заявку на ринок
+                    </button>
+                  </>
+                )}
+
+                {selectedBuilding === 'refinery' && (
+                  <>
+                    <h2>🏭 НПЗ</h2>
+                    <p>Цілісність: {state.refinery.condition}%</p>
+                    <p className="modal-hint">Оберіть робочого для переробки:</p>
+                    <div className="worker-picker">
+                      {idleWorkers.length === 0 && <p className="warn">Немає вільних робочих</p>}
+                      {idleWorkers.map((w) => (
+                        <button
+                          key={w.id}
+                          disabled={busy || state.player.oil_balance <= 0}
+                          onClick={() => runOnWorker('refine', w.id)}
+                        >
+                          Робочий {state.workers.indexOf(w) + 1}
+                        </button>
+                      ))}
+                    </div>
+                    <button className="market-btn" onClick={() => requestMarket('НПЗ')}>
+                      Подати заявку на ринок
+                    </button>
+                  </>
+                )}
+
+                {selectedBuilding === 'transport' && (
+                  <>
+                    <h2>🚚 Транспорт</h2>
+                    <p>Цілісність: {state.transport.condition}%</p>
+                    <p>На складі чекає: {state.field.stockpile}</p>
+                    <p className="modal-hint">Оберіть робочого для перевезення:</p>
+                    <div className="worker-picker">
+                      {idleWorkers.length === 0 && <p className="warn">Немає вільних робочих</p>}
+                      {idleWorkers.map((w) => (
+                        <button
+                          key={w.id}
+                          disabled={busy || state.field.stockpile <= 0}
+                          onClick={() => runOnWorker('transport', w.id)}
+                        >
+                          Робочий {state.workers.indexOf(w) + 1}
+                        </button>
+                      ))}
+                    </div>
+                    <button className="market-btn" onClick={() => requestMarket('Транспорт')}>
+                      Подати заявку на ринок
+                    </button>
+                  </>
+                )}
+
+                {selectedBuilding === 'partsFactory' && (
+                  <>
+                    <h2>🔧 Завод деталей</h2>
+                    <p>Цілісність: {state.partsFactory.condition}%</p>
+                    <p>Виробництво: 50 токенів → 5 деталей</p>
+                    <p className="modal-hint">Оберіть робочого для виробництва:</p>
+                    <div className="worker-picker">
+                      {idleWorkers.length === 0 && <p className="warn">Немає вільних робочих</p>}
+                      {idleWorkers.map((w) => (
+                        <button
+                          key={w.id}
+                          disabled={busy || state.player.token_balance < 50}
+                          onClick={() => runOnWorker('produce_parts', w.id)}
+                        >
+                          Робочий {state.workers.indexOf(w) + 1}
+                        </button>
+                      ))}
+                    </div>
+                    <button className="market-btn" onClick={() => requestMarket('Завод деталей')}>
+                      Подати заявку на ринок
+                    </button>
+                  </>
+                )}
+
+                {selectedBuilding === 'warehouse' && (
+                  <>
+                    <h2>📦 Склад</h2>
+                    <p>Накопичена нафта, що чекає на перевезення: {state.field.stockpile}</p>
+                  </>
+                )}
+
+                {selectedBuilding === 'bank' && (
+                  <>
+                    <h2>🏦 Банк</h2>
+                    <p>Курс палива зараз: {fuelPrice(state.player.fuel_balance)} токенів/од.</p>
+                    <p>У вас: {state.player.fuel_balance} палива</p>
+                    <button
+                      disabled={busy || state.player.fuel_balance <= 0}
+                      onClick={() => {
+                        callGameAction('sell')
+                        setSelectedBuilding(null)
+                      }}
+                    >
+                      Продати все паливо
+                    </button>
+                  </>
+                )}
+
+                <button className="modal-close" onClick={() => setSelectedBuilding(null)}>
+                  Закрити
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
 
