@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { supabase } from './lib/supabase'
+import { buildingArt } from './buildings'
 import './App.css'
 
 interface DbWorker {
@@ -52,17 +53,35 @@ interface GameState {
 
 type Status = 'not-in-telegram' | 'loading' | 'ready' | 'error'
 type Action = 'sync' | 'extract' | 'transport' | 'refine' | 'produce_parts' | 'sell'
-type BuildingKey = 'field' | 'refinery' | 'transport' | 'warehouse' | 'bank' | 'partsFactory'
+export type BuildingKey = 'field' | 'refinery' | 'transport' | 'warehouse' | 'bank' | 'partsFactory'
 
-const BUILDINGS: { key: BuildingKey; icon: string; label: string }[] = [
-  { key: 'field', icon: '🛢️', label: 'Родовище' },
-  { key: 'refinery', icon: '🏭', label: 'НПЗ' },
-  { key: 'transport', icon: '🚚', label: 'Транспорт' },
-  { key: 'warehouse', icon: '📦', label: 'Склад' },
-  { key: 'bank', icon: '🏦', label: 'Банк' },
-  { key: 'partsFactory', icon: '🔧', label: 'Завод деталей' },
-]
-const MAP_TILE_COUNT = 9
+const MAP_SIZE = 20
+const TILE_PX = 64
+const FOCUS_ROW = 9.5
+const FOCUS_COL = 9.5
+
+const BUILDING_POSITIONS: Record<BuildingKey, [number, number]> = {
+  field: [9, 8],
+  refinery: [9, 9],
+  transport: [9, 10],
+  warehouse: [8, 9],
+  bank: [10, 9],
+  partsFactory: [10, 10],
+}
+const BUILDING_LABELS: Record<BuildingKey, string> = {
+  field: 'Родовище',
+  refinery: 'НПЗ',
+  transport: 'Транспорт',
+  warehouse: 'Склад',
+  bank: 'Банк',
+  partsFactory: 'Завод деталей',
+}
+const BUILDING_AT_POSITION = new Map<string, BuildingKey>(
+  (Object.entries(BUILDING_POSITIONS) as [BuildingKey, [number, number]][]).map(([key, [r, c]]) => [
+    `${r}-${c}`,
+    key,
+  ]),
+)
 
 function fuelPrice(fuelBalance: number): number {
   const base = 50
@@ -88,6 +107,25 @@ async function errorDetail(error: unknown): Promise<string> {
   return (error as { message?: string })?.message ?? String(error)
 }
 
+function Mountains() {
+  return (
+    <svg className="map-backdrop" viewBox="0 0 400 200" preserveAspectRatio="xMidYMax slice">
+      <defs>
+        <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#2a1f3a" />
+          <stop offset="55%" stopColor="#6b3f3a" />
+          <stop offset="100%" stopColor="#c9793f" />
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="400" height="200" fill="url(#sky)" />
+      <polygon points="0,150 60,70 130,150" fill="#3a2f4a" opacity="0.55" />
+      <polygon points="90,150 170,50 250,150" fill="#332742" opacity="0.65" />
+      <polygon points="210,150 290,80 400,150" fill="#2c2138" opacity="0.75" />
+      <circle cx="330" cy="45" r="18" fill="#f2c168" opacity="0.85" />
+    </svg>
+  )
+}
+
 function App() {
   const [status, setStatus] = useState<Status>('loading')
   const [error, setError] = useState('')
@@ -96,8 +134,11 @@ function App() {
   const [now, setNow] = useState(Date.now())
   const [busy, setBusy] = useState(false)
   const [selectedBuilding, setSelectedBuilding] = useState<BuildingKey | null>(null)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
 
   const initDataRef = useRef<string | null>(null)
+  const dragStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
+  const didDragRef = useRef(false)
 
   const addLog = useCallback((message: string) => {
     setLog((prev) => [message, ...prev].slice(0, 6))
@@ -176,6 +217,30 @@ function App() {
     setSelectedBuilding(null)
   }
 
+  function onMapPointerDown(e: ReactPointerEvent) {
+    dragStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y }
+    didDragRef.current = false
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  function onMapPointerMove(e: ReactPointerEvent) {
+    const start = dragStartRef.current
+    if (!start) return
+    const dx = e.clientX - start.x
+    const dy = e.clientY - start.y
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) didDragRef.current = true
+    setPan({ x: start.panX + dx, y: start.panY + dy })
+  }
+
+  function onMapPointerUp() {
+    dragStartRef.current = null
+  }
+
+  function onBuildingClick(key: BuildingKey) {
+    if (didDragRef.current) return
+    setSelectedBuilding(key)
+  }
+
   const idleWorkers = state?.workers.filter((w) => w.status === 'idle') ?? []
 
   return (
@@ -209,47 +274,77 @@ function App() {
             <div>🔧 {state.player.parts_balance}</div>
           </section>
 
-          <div className="map-viewport">
-            <div className="map-grid">
-              {Array.from({ length: MAP_TILE_COUNT }, (_, i) => {
-                const b = BUILDINGS[i]
-                if (!b)
-                  return (
-                    <div key={`empty-${i}`} className="tile empty">
-                      <div className="tile-block" />
-                    </div>
-                  )
+          <div
+            className="map-viewport"
+            onPointerDown={onMapPointerDown}
+            onPointerMove={onMapPointerMove}
+            onPointerUp={onMapPointerUp}
+            onPointerLeave={onMapPointerUp}
+          >
+            <Mountains />
+            <div className="map-world" style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }}>
+              <div
+                className="map-grid"
+                style={{
+                  width: MAP_SIZE * TILE_PX,
+                  height: MAP_SIZE * TILE_PX,
+                  left: `calc(50% - ${FOCUS_COL * TILE_PX}px)`,
+                  top: `calc(50% - ${FOCUS_ROW * TILE_PX}px)`,
+                  transformOrigin: `${FOCUS_COL * TILE_PX}px ${FOCUS_ROW * TILE_PX}px`,
+                }}
+              >
+                {Array.from({ length: MAP_SIZE }, (_, row) =>
+                  Array.from({ length: MAP_SIZE }, (_, col) => {
+                    const key = BUILDING_AT_POSITION.get(`${row}-${col}`)
+                    const tileStyle = { left: col * TILE_PX, top: row * TILE_PX, width: TILE_PX, height: TILE_PX }
 
-                const cond =
-                  b.key === 'field'
-                    ? state.field.condition
-                    : b.key === 'refinery'
-                      ? state.refinery.condition
-                      : b.key === 'transport'
-                        ? state.transport.condition
-                        : b.key === 'partsFactory'
-                          ? state.partsFactory.condition
-                          : null
+                    if (!key) {
+                      const shade = (row * 3 + col * 7) % 3
+                      return (
+                        <div
+                          key={`${row}-${col}`}
+                          className={`tile terrain terrain-${shade}`}
+                          style={tileStyle}
+                        >
+                          <div className="tile-block" />
+                        </div>
+                      )
+                    }
 
-                return (
-                  <button
-                    key={b.key}
-                    className={`tile building ${cond !== null ? conditionClass(cond) : ''}`}
-                    onClick={() => setSelectedBuilding(b.key)}
-                  >
-                    <div className="tile-block" />
-                    <div className="tile-content">
-                      <span className="tile-icon">{b.icon}</span>
-                      <span className="tile-label">{b.label}</span>
-                    </div>
-                    {b.key === 'warehouse' && <span className="tile-badge">{state.field.stockpile}</span>}
-                    {b.key === 'field' && state.field.reserve_remaining <= 0 && (
-                      <span className="tile-badge warn">0</span>
-                    )}
-                  </button>
-                )
-              })}
+                    const cond =
+                      key === 'field'
+                        ? state.field.condition
+                        : key === 'refinery'
+                          ? state.refinery.condition
+                          : key === 'transport'
+                            ? state.transport.condition
+                            : key === 'partsFactory'
+                              ? state.partsFactory.condition
+                              : null
+
+                    return (
+                      <button
+                        key={`${row}-${col}`}
+                        className={`tile building ${cond !== null ? conditionClass(cond) : ''}`}
+                        style={tileStyle}
+                        onClick={() => onBuildingClick(key)}
+                      >
+                        <div className="tile-block" />
+                        <div className="tile-content">
+                          <div className="tile-art">{buildingArt(key)}</div>
+                          <span className="tile-label">{BUILDING_LABELS[key]}</span>
+                        </div>
+                        {key === 'warehouse' && <span className="tile-badge">{state.field.stockpile}</span>}
+                        {key === 'field' && state.field.reserve_remaining <= 0 && (
+                          <span className="tile-badge warn">0</span>
+                        )}
+                      </button>
+                    )
+                  }),
+                )}
+              </div>
             </div>
+            <p className="map-hint">Перетягни, щоб роздивитись карту</p>
           </div>
 
           <div className="worker-tray">
@@ -270,7 +365,7 @@ function App() {
               <div className="modal" onClick={(e) => e.stopPropagation()}>
                 {selectedBuilding === 'field' && (
                   <>
-                    <h2>🛢️ Родовище</h2>
+                    <h2>Родовище</h2>
                     <p>
                       Резерв: {state.field.reserve_remaining} / {state.field.reserve_total} · Цілісність:{' '}
                       {state.field.condition}%
@@ -296,7 +391,7 @@ function App() {
 
                 {selectedBuilding === 'refinery' && (
                   <>
-                    <h2>🏭 НПЗ</h2>
+                    <h2>НПЗ</h2>
                     <p>Цілісність: {state.refinery.condition}%</p>
                     <p className="modal-hint">Оберіть робочого для переробки:</p>
                     <div className="worker-picker">
@@ -319,7 +414,7 @@ function App() {
 
                 {selectedBuilding === 'transport' && (
                   <>
-                    <h2>🚚 Транспорт</h2>
+                    <h2>Транспорт</h2>
                     <p>Цілісність: {state.transport.condition}%</p>
                     <p>На складі чекає: {state.field.stockpile}</p>
                     <p className="modal-hint">Оберіть робочого для перевезення:</p>
@@ -343,7 +438,7 @@ function App() {
 
                 {selectedBuilding === 'partsFactory' && (
                   <>
-                    <h2>🔧 Завод деталей</h2>
+                    <h2>Завод деталей</h2>
                     <p>Цілісність: {state.partsFactory.condition}%</p>
                     <p>Виробництво: 50 токенів → 5 деталей</p>
                     <p className="modal-hint">Оберіть робочого для виробництва:</p>
@@ -367,14 +462,14 @@ function App() {
 
                 {selectedBuilding === 'warehouse' && (
                   <>
-                    <h2>📦 Склад</h2>
+                    <h2>Склад</h2>
                     <p>Накопичена нафта, що чекає на перевезення: {state.field.stockpile}</p>
                   </>
                 )}
 
                 {selectedBuilding === 'bank' && (
                   <>
-                    <h2>🏦 Банк</h2>
+                    <h2>Банк</h2>
                     <p>Курс палива зараз: {fuelPrice(state.player.fuel_balance)} токенів/од.</p>
                     <p>У вас: {state.player.fuel_balance} палива</p>
                     <button
