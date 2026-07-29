@@ -218,9 +218,13 @@ function App() {
   }
 
   function onMapPointerDown(e: ReactPointerEvent) {
+    // Let taps on a building button behave like a normal button — don't enter
+    // drag-tracking at all, so there's no pointer-capture interference with
+    // its own click (which only showed up on real touch devices, not in
+    // synthetic click() tests).
+    if ((e.target as HTMLElement).closest('.tile.building')) return
     dragStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y }
     didDragRef.current = false
-    e.currentTarget.setPointerCapture(e.pointerId)
   }
 
   function onMapPointerMove(e: ReactPointerEvent) {

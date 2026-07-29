@@ -152,6 +152,12 @@ button:disabled {
   transform-style: preserve-3d;
   background: none;
   border: none;
+  z-index: 1;
+}
+
+.tile.building {
+  transform: translateZ(3px);
+  z-index: 2;
   padding: 0;
 }
 
