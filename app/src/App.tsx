@@ -26,6 +26,11 @@ interface DbTransport {
   condition: number
 }
 
+interface DbPartsFactory {
+  level: number
+  condition: number
+}
+
 interface DbPlayer {
   id: string
   telegram_id: number
@@ -33,6 +38,7 @@ interface DbPlayer {
   token_balance: number
   oil_balance: number
   fuel_balance: number
+  parts_balance: number
 }
 
 interface GameState {
@@ -41,6 +47,7 @@ interface GameState {
   field: DbField
   refinery: DbRefinery
   transport: DbTransport
+  partsFactory: DbPartsFactory
 }
 
 type Status = 'not-in-telegram' | 'loading' | 'ready' | 'error'
@@ -78,7 +85,10 @@ function App() {
   }, [])
 
   const callGameAction = useCallback(
-    async (action: 'sync' | 'extract' | 'transport' | 'refine' | 'sell', workerId?: string) => {
+    async (
+      action: 'sync' | 'extract' | 'transport' | 'refine' | 'produce_parts' | 'sell',
+      workerId?: string,
+    ) => {
       if (!initDataRef.current) return
       setBusy(true)
       const { data, error } = await supabase.functions.invoke('game-action', {
@@ -168,6 +178,7 @@ function App() {
             <div>💰 {state.player.token_balance} токенів</div>
             <div>🛢️ {state.player.oil_balance} нафти</div>
             <div>⛽ {state.player.fuel_balance} палива</div>
+            <div>🔧 {state.player.parts_balance} деталей</div>
           </section>
 
           <section className="card">
@@ -187,6 +198,14 @@ function App() {
             <p>
               Рівень: {state.transport.level} · Цілісність: {state.transport.condition}%
             </p>
+          </section>
+
+          <section className="card">
+            <h2>Завод деталей</h2>
+            <p>
+              Рівень: {state.partsFactory.level} · Цілісність: {state.partsFactory.condition}%
+            </p>
+            <p>Виробництво: 50 токенів → 5 деталей</p>
           </section>
 
           <section className="card">
@@ -232,6 +251,12 @@ function App() {
                       onClick={() => callGameAction('refine', w.id)}
                     >
                       Переробка
+                    </button>
+                    <button
+                      disabled={busy || !idle || state.player.token_balance < 50}
+                      onClick={() => callGameAction('produce_parts', w.id)}
+                    >
+                      Деталі
                     </button>
                   </div>
                 )

@@ -57,6 +57,9 @@ var OIL_PER_EXTRACT = 20;
 var OIL_PER_TRANSPORT = 25;
 var REFINE_OIL_INPUT = 30;
 var FUEL_CONVERSION_RATE = 0.6;
+var PARTS_MS = 7e3;
+var PARTS_TOKEN_COST = 50;
+var PARTS_PER_PRODUCTION = 5;
 function fuelPrice(fuelBalance) {
   const base = 50;
   return Math.max(5, Math.round(base / (1 + fuelBalance * 0.05)));
@@ -79,10 +82,12 @@ Deno.serve(async (req) => {
   const { data: field } = await supabase.from("oil_fields").select("*").eq("owner_id", player.id).single();
   const { data: refinery } = await supabase.from("refineries").select("*").eq("owner_id", player.id).single();
   const { data: transport } = await supabase.from("transports").select("*").eq("owner_id", player.id).single();
+  const { data: partsFactory } = await supabase.from("parts_factories").select("*").eq("owner_id", player.id).single();
   const now = /* @__PURE__ */ new Date();
   let playerOilDelta = 0;
   let fuelDelta = 0;
   let fieldStockpileDelta = 0;
+  let partsDelta = 0;
   for (const w of workers ?? []) {
     if (w.status === "working" && w.busy_until && new Date(w.busy_until) <= now) {
       const { data: pendingExtraction } = await supabase.from("extraction_events").select("*").eq("worker_id", w.id).eq("collected", false).maybeSingle();
@@ -100,6 +105,11 @@ Deno.serve(async (req) => {
         fuelDelta += pendingRefining.fuel_produced;
         await supabase.from("refining_events").update({ collected: true }).eq("id", pendingRefining.id);
       }
+      const { data: pendingParts } = await supabase.from("parts_production_events").select("*").eq("worker_id", w.id).eq("collected", false).maybeSingle();
+      if (pendingParts) {
+        partsDelta += pendingParts.parts_produced;
+        await supabase.from("parts_production_events").update({ collected: true }).eq("id", pendingParts.id);
+      }
       const restUntil = new Date(new Date(w.busy_until).getTime() + REST_MS);
       if (restUntil <= now) {
         await supabase.from("workers").update({ status: "idle", busy_until: null }).eq("id", w.id);
@@ -116,10 +126,15 @@ Deno.serve(async (req) => {
       w.busy_until = null;
     }
   }
-  if (playerOilDelta || fuelDelta) {
-    await supabase.from("players").update({ oil_balance: player.oil_balance + playerOilDelta, fuel_balance: player.fuel_balance + fuelDelta }).eq("id", player.id);
+  if (playerOilDelta || fuelDelta || partsDelta) {
+    await supabase.from("players").update({
+      oil_balance: player.oil_balance + playerOilDelta,
+      fuel_balance: player.fuel_balance + fuelDelta,
+      parts_balance: player.parts_balance + partsDelta
+    }).eq("id", player.id);
     player.oil_balance += playerOilDelta;
     player.fuel_balance += fuelDelta;
+    player.parts_balance += partsDelta;
   }
   if (fieldStockpileDelta && field) {
     await supabase.from("oil_fields").update({ stockpile: field.stockpile + fieldStockpileDelta }).eq("id", field.id);
@@ -182,6 +197,24 @@ Deno.serve(async (req) => {
       fuel_produced: fuelOut,
       collected: false
     });
+  } else if (action === "produce_parts") {
+    if (!partsFactory) return json({ error: "no parts factory" }, 400);
+    if (player.token_balance < PARTS_TOKEN_COST) return json({ error: "not enough tokens" }, 400);
+    const completesAt = new Date(now.getTime() + PARTS_MS).toISOString();
+    const claimedWorker = await claimWorker(completesAt);
+    if (!claimedWorker) return json({ error: "worker not idle" }, 400);
+    await supabase.from("players").update({ token_balance: player.token_balance - PARTS_TOKEN_COST }).eq("id", player.id);
+    player.token_balance -= PARTS_TOKEN_COST;
+    await supabase.from("parts_factories").update({ condition: Math.max(0, partsFactory.condition - 2) }).eq("id", partsFactory.id);
+    await supabase.from("parts_production_events").insert({
+      worker_id: claimedWorker.id,
+      factory_id: partsFactory.id,
+      starts_at: now.toISOString(),
+      completes_at: completesAt,
+      tokens_spent: PARTS_TOKEN_COST,
+      parts_produced: PARTS_PER_PRODUCTION,
+      collected: false
+    });
   } else if (action === "sell") {
     if (player.fuel_balance <= 0) return json({ error: "no fuel to sell" }, 400);
     const price = fuelPrice(player.fuel_balance);
@@ -196,11 +229,13 @@ Deno.serve(async (req) => {
   const { data: freshField } = await supabase.from("oil_fields").select("*").eq("owner_id", player.id).single();
   const { data: freshRefinery } = await supabase.from("refineries").select("*").eq("owner_id", player.id).single();
   const { data: freshTransport } = await supabase.from("transports").select("*").eq("owner_id", player.id).single();
+  const { data: freshPartsFactory } = await supabase.from("parts_factories").select("*").eq("owner_id", player.id).single();
   return json({
     player,
     workers: freshWorkers,
     field: freshField,
     refinery: freshRefinery,
-    transport: freshTransport
+    transport: freshTransport,
+    partsFactory: freshPartsFactory
   });
 });
