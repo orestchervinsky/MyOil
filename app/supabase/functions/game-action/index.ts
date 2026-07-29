@@ -94,7 +94,7 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
   const body = await req.json().catch(() => ({}))
-  const { initData, action } = body as { initData?: string; action?: string }
+  const { initData, action, workerId } = body as { initData?: string; action?: string; workerId?: string }
 
   if (typeof initData !== 'string') return json({ error: 'initData required' }, 400)
 
@@ -142,12 +142,22 @@ Deno.serve(async (req) => {
         fuelDelta += pendingRefining.fuel_produced
         await supabase.from('refining_events').update({ collected: true }).eq('id', pendingRefining.id)
       }
-      await supabase
-        .from('workers')
-        .update({ status: 'resting', busy_until: new Date(now.getTime() + REST_MS).toISOString() })
-        .eq('id', w.id)
-      w.status = 'resting'
-      w.busy_until = new Date(now.getTime() + REST_MS).toISOString()
+      // Anchor rest to when the job actually completed, not to whenever this
+      // sync happens to run — otherwise a delayed sync makes rest drift later
+      // and later (backgrounded tab, slow network, etc).
+      const restUntil = new Date(new Date(w.busy_until).getTime() + REST_MS)
+      if (restUntil <= now) {
+        await supabase.from('workers').update({ status: 'idle', busy_until: null }).eq('id', w.id)
+        w.status = 'idle'
+        w.busy_until = null
+      } else {
+        await supabase
+          .from('workers')
+          .update({ status: 'resting', busy_until: restUntil.toISOString() })
+          .eq('id', w.id)
+        w.status = 'resting'
+        w.busy_until = restUntil.toISOString()
+      }
     } else if (w.status === 'resting' && w.busy_until && new Date(w.busy_until) <= now) {
       await supabase.from('workers').update({ status: 'idle', busy_until: null }).eq('id', w.id)
       w.status = 'idle'
@@ -164,9 +174,17 @@ Deno.serve(async (req) => {
     player.fuel_balance += fuelDelta
   }
 
+  function pickWorker() {
+    if (workerId) {
+      const requested = (workers ?? []).find((w) => w.id === workerId)
+      return requested && requested.status === 'idle' ? requested : null
+    }
+    return (workers ?? []).find((w) => w.status === 'idle') ?? null
+  }
+
   if (action === 'extract') {
-    const idleWorker = (workers ?? []).find((w) => w.status === 'idle')
-    if (!idleWorker) return json({ error: 'no idle worker' }, 400)
+    const idleWorker = pickWorker()
+    if (!idleWorker) return json({ error: 'worker not idle' }, 400)
     if (!field || field.reserve_remaining <= 0) return json({ error: 'field depleted' }, 400)
 
     const amount = Math.min(OIL_PER_EXTRACT * field.pump_level, field.reserve_remaining)
@@ -189,8 +207,8 @@ Deno.serve(async (req) => {
       collected: false,
     })
   } else if (action === 'refine') {
-    const idleWorker = (workers ?? []).find((w) => w.status === 'idle')
-    if (!idleWorker) return json({ error: 'no idle worker' }, 400)
+    const idleWorker = pickWorker()
+    if (!idleWorker) return json({ error: 'worker not idle' }, 400)
     if (!refinery) return json({ error: 'no refinery' }, 400)
     const amount = Math.min(REFINE_OIL_INPUT, player.oil_balance)
     if (amount <= 0) return json({ error: 'no oil to refine' }, 400)

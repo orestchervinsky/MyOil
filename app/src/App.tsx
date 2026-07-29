@@ -71,11 +71,11 @@ function App() {
   }, [])
 
   const callGameAction = useCallback(
-    async (action: 'sync' | 'extract' | 'refine' | 'sell') => {
+    async (action: 'sync' | 'extract' | 'refine' | 'sell', workerId?: string) => {
       if (!initDataRef.current) return
       setBusy(true)
       const { data, error } = await supabase.functions.invoke('game-action', {
-        body: { initData: initDataRef.current, action },
+        body: { initData: initDataRef.current, action, workerId },
       })
       setBusy(false)
       if (error) {
@@ -191,6 +191,7 @@ function App() {
               {state.workers.map((w, i) => {
                 const busyUntilMs = w.busy_until ? new Date(w.busy_until).getTime() : null
                 const secondsLeft = busyUntilMs ? Math.max(0, Math.ceil((busyUntilMs - now) / 1000)) : 0
+                const idle = w.status === 'idle'
                 return (
                   <div key={w.id} className={`worker ${w.status}`}>
                     <strong>Робочий {i + 1}</strong>
@@ -199,23 +200,21 @@ function App() {
                       {w.status === 'working' && `працює (${secondsLeft}с)`}
                       {w.status === 'resting' && `відпочиває (${secondsLeft}с)`}
                     </p>
+                    <button
+                      disabled={busy || !idle || state.field.reserve_remaining <= 0}
+                      onClick={() => callGameAction('extract', w.id)}
+                    >
+                      Видобуток
+                    </button>
+                    <button
+                      disabled={busy || !idle || state.player.oil_balance <= 0}
+                      onClick={() => callGameAction('refine', w.id)}
+                    >
+                      Переробка
+                    </button>
                   </div>
                 )
               })}
-            </div>
-            <div className="worker-actions">
-              <button
-                disabled={busy || !state.workers.some((w) => w.status === 'idle') || state.field.reserve_remaining <= 0}
-                onClick={() => callGameAction('extract')}
-              >
-                Відправити на видобуток
-              </button>
-              <button
-                disabled={busy || !state.workers.some((w) => w.status === 'idle') || state.player.oil_balance <= 0}
-                onClick={() => callGameAction('refine')}
-              >
-                Відправити на переробку
-              </button>
             </div>
           </section>
         </>
