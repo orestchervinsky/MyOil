@@ -111,7 +111,11 @@ Deno.serve(async (req) => {
 
   if (playerError || !player) return json({ error: 'player not found — call telegram-auth first' }, 404)
 
-  const { data: workers } = await supabase.from('workers').select('*').eq('player_id', player.id)
+  const { data: workers } = await supabase
+    .from('workers')
+    .select('*')
+    .eq('player_id', player.id)
+    .order('created_at')
   const { data: field } = await supabase.from('oil_fields').select('*').eq('owner_id', player.id).single()
   const { data: refinery } = await supabase.from('refineries').select('*').eq('owner_id', player.id).single()
 
@@ -246,7 +250,11 @@ Deno.serve(async (req) => {
     return json({ error: `unknown action: ${action}` }, 400)
   }
 
-  const { data: freshWorkers } = await supabase.from('workers').select('*').eq('player_id', player.id)
+  const { data: freshWorkers } = await supabase
+    .from('workers')
+    .select('*')
+    .eq('player_id', player.id)
+    .order('created_at')
   const { data: freshField } = await supabase.from('oil_fields').select('*').eq('owner_id', player.id).single()
   const { data: freshRefinery } = await supabase.from('refineries').select('*').eq('owner_id', player.id).single()
 

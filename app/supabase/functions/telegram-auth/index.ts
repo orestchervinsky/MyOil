@@ -114,12 +114,18 @@ Deno.serve(async (req) => {
 
   // First login: grant starting workers + one oil field + one refinery (MVP —
   // no auction/onboarding-tiers yet, see design doc section 5 for the future flow).
-  const { count: workerCount } = await supabase
-    .from('workers')
-    .select('*', { count: 'exact', head: true })
-    .eq('player_id', player.id)
+  // The update below only succeeds for whichever concurrent request gets there
+  // first (WHERE onboarded = false), so two near-simultaneous calls — e.g.
+  // React Strict Mode double-invoking the mount effect — can't both onboard.
+  const { data: claimedOnboarding } = await supabase
+    .from('players')
+    .update({ onboarded: true })
+    .eq('id', player.id)
+    .eq('onboarded', false)
+    .select()
+    .maybeSingle()
 
-  if (!workerCount) {
+  if (claimedOnboarding) {
     await supabase.from('workers').insert(
       Array.from({ length: 4 }, () => ({ player_id: player.id })),
     )
