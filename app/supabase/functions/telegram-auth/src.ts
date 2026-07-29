@@ -73,6 +73,7 @@ Deno.serve(async (req) => {
     })
 
     await supabase.from('refineries').insert({ owner_id: player.id })
+    await supabase.from('transports').insert({ owner_id: player.id })
   }
 
   return new Response(JSON.stringify({ player }), {

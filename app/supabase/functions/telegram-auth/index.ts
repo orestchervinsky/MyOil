@@ -90,6 +90,7 @@ Deno.serve(async (req) => {
       reserve_remaining: reserve
     });
     await supabase.from("refineries").insert({ owner_id: player.id });
+    await supabase.from("transports").insert({ owner_id: player.id });
   }
   return new Response(JSON.stringify({ player }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" }

@@ -50,9 +50,11 @@ function json(body, status = 200) {
   });
 }
 var EXTRACT_MS = 8e3;
+var TRANSPORT_MS = 7e3;
 var REFINE_MS = 6e3;
 var REST_MS = 4e3;
 var OIL_PER_EXTRACT = 20;
+var OIL_PER_TRANSPORT = 25;
 var REFINE_OIL_INPUT = 30;
 var FUEL_CONVERSION_RATE = 0.6;
 function fuelPrice(fuelBalance) {
@@ -76,15 +78,22 @@ Deno.serve(async (req) => {
   const { data: workers } = await supabase.from("workers").select("*").eq("player_id", player.id).order("position");
   const { data: field } = await supabase.from("oil_fields").select("*").eq("owner_id", player.id).single();
   const { data: refinery } = await supabase.from("refineries").select("*").eq("owner_id", player.id).single();
+  const { data: transport } = await supabase.from("transports").select("*").eq("owner_id", player.id).single();
   const now = /* @__PURE__ */ new Date();
-  let oilDelta = 0;
+  let playerOilDelta = 0;
   let fuelDelta = 0;
+  let fieldStockpileDelta = 0;
   for (const w of workers ?? []) {
     if (w.status === "working" && w.busy_until && new Date(w.busy_until) <= now) {
       const { data: pendingExtraction } = await supabase.from("extraction_events").select("*").eq("worker_id", w.id).eq("collected", false).maybeSingle();
       if (pendingExtraction) {
-        oilDelta += pendingExtraction.amount_oil;
+        fieldStockpileDelta += pendingExtraction.amount_oil;
         await supabase.from("extraction_events").update({ collected: true }).eq("id", pendingExtraction.id);
+      }
+      const { data: pendingTransport } = await supabase.from("transport_events").select("*").eq("worker_id", w.id).eq("collected", false).maybeSingle();
+      if (pendingTransport) {
+        playerOilDelta += pendingTransport.amount_oil;
+        await supabase.from("transport_events").update({ collected: true }).eq("id", pendingTransport.id);
       }
       const { data: pendingRefining } = await supabase.from("refining_events").select("*").eq("worker_id", w.id).eq("collected", false).maybeSingle();
       if (pendingRefining) {
@@ -107,10 +116,14 @@ Deno.serve(async (req) => {
       w.busy_until = null;
     }
   }
-  if (oilDelta || fuelDelta) {
-    await supabase.from("players").update({ oil_balance: player.oil_balance + oilDelta, fuel_balance: player.fuel_balance + fuelDelta }).eq("id", player.id);
-    player.oil_balance += oilDelta;
+  if (playerOilDelta || fuelDelta) {
+    await supabase.from("players").update({ oil_balance: player.oil_balance + playerOilDelta, fuel_balance: player.fuel_balance + fuelDelta }).eq("id", player.id);
+    player.oil_balance += playerOilDelta;
     player.fuel_balance += fuelDelta;
+  }
+  if (fieldStockpileDelta && field) {
+    await supabase.from("oil_fields").update({ stockpile: field.stockpile + fieldStockpileDelta }).eq("id", field.id);
+    field.stockpile += fieldStockpileDelta;
   }
   async function claimWorker(completesAt) {
     if (!workerId) return null;
@@ -127,6 +140,23 @@ Deno.serve(async (req) => {
     await supabase.from("extraction_events").insert({
       worker_id: claimedWorker.id,
       field_id: field.id,
+      starts_at: now.toISOString(),
+      completes_at: completesAt,
+      amount_oil: amount,
+      collected: false
+    });
+  } else if (action === "transport") {
+    if (!field || field.stockpile <= 0) return json({ error: "nothing to transport" }, 400);
+    if (!transport) return json({ error: "no transport" }, 400);
+    const amount = Math.min(OIL_PER_TRANSPORT * transport.level, field.stockpile);
+    const completesAt = new Date(now.getTime() + TRANSPORT_MS).toISOString();
+    const claimedWorker = await claimWorker(completesAt);
+    if (!claimedWorker) return json({ error: "worker not idle" }, 400);
+    await supabase.from("oil_fields").update({ stockpile: field.stockpile - amount }).eq("id", field.id);
+    await supabase.from("transports").update({ condition: Math.max(0, transport.condition - 2) }).eq("id", transport.id);
+    await supabase.from("transport_events").insert({
+      worker_id: claimedWorker.id,
+      transport_id: transport.id,
       starts_at: now.toISOString(),
       completes_at: completesAt,
       amount_oil: amount,
@@ -165,5 +195,12 @@ Deno.serve(async (req) => {
   const { data: freshWorkers } = await supabase.from("workers").select("*").eq("player_id", player.id).order("position");
   const { data: freshField } = await supabase.from("oil_fields").select("*").eq("owner_id", player.id).single();
   const { data: freshRefinery } = await supabase.from("refineries").select("*").eq("owner_id", player.id).single();
-  return json({ player, workers: freshWorkers, field: freshField, refinery: freshRefinery });
+  const { data: freshTransport } = await supabase.from("transports").select("*").eq("owner_id", player.id).single();
+  return json({
+    player,
+    workers: freshWorkers,
+    field: freshField,
+    refinery: freshRefinery,
+    transport: freshTransport
+  });
 });

@@ -13,9 +13,15 @@ interface DbField {
   reserve_remaining: number
   pump_level: number
   condition: number
+  stockpile: number
 }
 
 interface DbRefinery {
+  level: number
+  condition: number
+}
+
+interface DbTransport {
   level: number
   condition: number
 }
@@ -34,6 +40,7 @@ interface GameState {
   workers: DbWorker[]
   field: DbField
   refinery: DbRefinery
+  transport: DbTransport
 }
 
 type Status = 'not-in-telegram' | 'loading' | 'ready' | 'error'
@@ -71,7 +78,7 @@ function App() {
   }, [])
 
   const callGameAction = useCallback(
-    async (action: 'sync' | 'extract' | 'refine' | 'sell', workerId?: string) => {
+    async (action: 'sync' | 'extract' | 'transport' | 'refine' | 'sell', workerId?: string) => {
       if (!initDataRef.current) return
       setBusy(true)
       const { data, error } = await supabase.functions.invoke('game-action', {
@@ -171,7 +178,15 @@ function App() {
             <p>
               Рівень качки: {state.field.pump_level} · Цілісність: {state.field.condition}%
             </p>
+            <p>Видобуто, чекає на перевезення: {state.field.stockpile}</p>
             {state.field.reserve_remaining <= 0 && <p className="warn">Виснажене</p>}
+          </section>
+
+          <section className="card">
+            <h2>Транспорт</h2>
+            <p>
+              Рівень: {state.transport.level} · Цілісність: {state.transport.condition}%
+            </p>
           </section>
 
           <section className="card">
@@ -205,6 +220,12 @@ function App() {
                       onClick={() => callGameAction('extract', w.id)}
                     >
                       Видобуток
+                    </button>
+                    <button
+                      disabled={busy || !idle || state.field.stockpile <= 0}
+                      onClick={() => callGameAction('transport', w.id)}
+                    >
+                      Перевезти
                     </button>
                     <button
                       disabled={busy || !idle || state.player.oil_balance <= 0}
