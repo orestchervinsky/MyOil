@@ -38,10 +38,12 @@ body {
 .game {
   max-width: 520px;
   margin: 0 auto;
-  padding: 8px 8px 0;
+  padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) 0
+    max(8px, env(safe-area-inset-left));
   font-family: system-ui, sans-serif;
   position: relative;
   height: 100%;
+  width: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -119,7 +121,7 @@ button:disabled {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  margin: 0 -8px;
+  margin: 0 calc(-1 * max(8px, env(safe-area-inset-right))) 0 calc(-1 * max(8px, env(safe-area-inset-left)));
   border: 1px solid var(--border);
   perspective: 1400px;
   touch-action: none;
