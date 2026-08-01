@@ -109,22 +109,16 @@ button:disabled {
   cursor: default;
 }
 
-/* --- Map (isometric, pannable) --- */
+/* --- Map (isometric, static) --- */
 
 .map-viewport {
   position: relative;
-  height: 360px;
+  height: 260px;
   overflow: hidden;
   margin-bottom: 12px;
   border: 1px solid var(--border);
   border-radius: 14px;
   perspective: 1400px;
-  touch-action: none;
-  cursor: grab;
-}
-
-.map-viewport:active {
-  cursor: grabbing;
 }
 
 .map-backdrop {
@@ -138,7 +132,6 @@ button:disabled {
 .map-world {
   position: absolute;
   inset: 0;
-  will-change: transform;
 }
 
 .map-grid {
@@ -257,20 +250,6 @@ button:disabled {
 .tile-badge.warn {
   background: var(--bad);
   color: #fff;
-}
-
-.map-hint {
-  position: absolute;
-  bottom: 6px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 11px;
-  color: var(--text-dim);
-  background: rgba(0, 0, 0, 0.45);
-  padding: 3px 10px;
-  border-radius: 999px;
-  pointer-events: none;
-  margin: 0;
 }
 
 /* --- Worker tray --- */

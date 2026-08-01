@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { buildingArt } from './buildings'
 import './App.css'
@@ -55,18 +55,18 @@ type Status = 'not-in-telegram' | 'loading' | 'ready' | 'error'
 type Action = 'sync' | 'extract' | 'transport' | 'refine' | 'produce_parts' | 'sell'
 export type BuildingKey = 'field' | 'refinery' | 'transport' | 'warehouse' | 'bank' | 'partsFactory'
 
-const MAP_SIZE = 20
+const MAP_SIZE = 7
 const TILE_PX = 64
-const FOCUS_ROW = 9.5
-const FOCUS_COL = 9.5
+const FOCUS_ROW = 3.5
+const FOCUS_COL = 3.5
 
 const BUILDING_POSITIONS: Record<BuildingKey, [number, number]> = {
-  field: [9, 8],
-  refinery: [9, 9],
-  transport: [9, 10],
-  warehouse: [8, 9],
-  bank: [10, 9],
-  partsFactory: [10, 10],
+  field: [3, 2],
+  refinery: [3, 3],
+  transport: [3, 4],
+  warehouse: [2, 3],
+  bank: [4, 3],
+  partsFactory: [4, 4],
 }
 const BUILDING_LABELS: Record<BuildingKey, string> = {
   field: 'Родовище',
@@ -134,11 +134,8 @@ function App() {
   const [now, setNow] = useState(Date.now())
   const [busy, setBusy] = useState(false)
   const [selectedBuilding, setSelectedBuilding] = useState<BuildingKey | null>(null)
-  const [pan, setPan] = useState({ x: 0, y: 0 })
 
   const initDataRef = useRef<string | null>(null)
-  const dragStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
-  const didDragRef = useRef(false)
 
   const addLog = useCallback((message: string) => {
     setLog((prev) => [message, ...prev].slice(0, 6))
@@ -217,31 +214,7 @@ function App() {
     setSelectedBuilding(null)
   }
 
-  function onMapPointerDown(e: ReactPointerEvent) {
-    // Let taps on a building button behave like a normal button — don't enter
-    // drag-tracking at all, so there's no pointer-capture interference with
-    // its own click (which only showed up on real touch devices, not in
-    // synthetic click() tests).
-    if ((e.target as HTMLElement).closest('.tile.building')) return
-    dragStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y }
-    didDragRef.current = false
-  }
-
-  function onMapPointerMove(e: ReactPointerEvent) {
-    const start = dragStartRef.current
-    if (!start) return
-    const dx = e.clientX - start.x
-    const dy = e.clientY - start.y
-    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) didDragRef.current = true
-    setPan({ x: start.panX + dx, y: start.panY + dy })
-  }
-
-  function onMapPointerUp() {
-    dragStartRef.current = null
-  }
-
   function onBuildingClick(key: BuildingKey) {
-    if (didDragRef.current) return
     setSelectedBuilding(key)
   }
 
@@ -278,15 +251,9 @@ function App() {
             <div>🔧 {state.player.parts_balance}</div>
           </section>
 
-          <div
-            className="map-viewport"
-            onPointerDown={onMapPointerDown}
-            onPointerMove={onMapPointerMove}
-            onPointerUp={onMapPointerUp}
-            onPointerLeave={onMapPointerUp}
-          >
+          <div className="map-viewport">
             <Mountains />
-            <div className="map-world" style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }}>
+            <div className="map-world">
               <div
                 className="map-grid"
                 style={{
@@ -348,7 +315,6 @@ function App() {
                 )}
               </div>
             </div>
-            <p className="map-hint">Перетягни, щоб роздивитись карту</p>
           </div>
 
           <div className="worker-tray">
