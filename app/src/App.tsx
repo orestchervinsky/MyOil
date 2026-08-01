@@ -373,10 +373,6 @@ function App() {
 
   return (
     <div className="game">
-      <header>
-        <h1>My Oil</h1>
-      </header>
-
       {status === 'not-in-telegram' && (
         <section className="card">
           <p>Відкрий цей застосунок через Telegram-бота — поза Telegram гра не працює.</p>
