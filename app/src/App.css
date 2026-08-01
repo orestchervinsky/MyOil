@@ -16,18 +16,35 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
+  margin: 0;
+}
+
+#root {
+  width: auto;
+  min-height: 0;
+  border-inline: none;
 }
 
 .game {
   max-width: 520px;
   margin: 0 auto;
-  padding: 20px 14px 100px;
+  padding: 14px 14px 0;
   font-family: system-ui, sans-serif;
   position: relative;
-  min-height: 100vh;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 header {
@@ -113,9 +130,10 @@ button:disabled {
 
 .map-viewport {
   position: relative;
-  height: 70vh;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
-  margin: 0 -14px 12px;
+  margin: 0 -14px;
   border: 1px solid var(--border);
   perspective: 1400px;
   touch-action: none;
@@ -417,13 +435,19 @@ button:disabled {
   padding: 6px 10px;
 }
 
-.log ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 90px;
+  transform: translateX(-50%);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text);
   font-size: 13px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  color: var(--text-dim);
+  padding: 10px 16px;
+  border-radius: 999px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  z-index: 20;
+  max-width: 85%;
+  text-align: center;
 }

@@ -7,6 +7,8 @@ declare global {
         initData: string
         ready: () => void
         expand: () => void
+        disableVerticalSwipes?: () => void
+        isExpanded?: boolean
       }
     }
   }

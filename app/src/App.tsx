@@ -255,7 +255,7 @@ function App() {
   const [status, setStatus] = useState<Status>('loading')
   const [error, setError] = useState('')
   const [state, setState] = useState<GameState | null>(null)
-  const [log, setLog] = useState<string[]>([])
+  const [toast, setToast] = useState<string | null>(null)
   const [now, setNow] = useState(Date.now())
   const [busy, setBusy] = useState(false)
   const [selectedBuilding, setSelectedBuilding] = useState<BuildingKey | null>(null)
@@ -264,9 +264,12 @@ function App() {
 
   const initDataRef = useRef<string | null>(null)
   const dragStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
+  const toastTimerRef = useRef<number | null>(null)
 
   const addLog = useCallback((message: string) => {
-    setLog((prev) => [message, ...prev].slice(0, 6))
+    setToast(message)
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
   }, [])
 
   const callGameAction = useCallback(
@@ -289,6 +292,8 @@ function App() {
   useEffect(() => {
     const tg = window.Telegram?.WebApp
     tg?.ready()
+    tg?.expand()
+    tg?.disableVerticalSwipes?.()
     const initData = tg?.initData
     if (!initData) {
       setStatus('not-in-telegram')
@@ -631,14 +636,7 @@ function App() {
         </>
       )}
 
-      <section className="card log">
-        <h2>Журнал</h2>
-        <ul>
-          {log.map((entry, i) => (
-            <li key={i}>{entry}</li>
-          ))}
-        </ul>
-      </section>
+      {toast && <div className="toast">{toast}</div>}
     </div>
   )
 }
