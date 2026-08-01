@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { supabase } from './lib/supabase'
 import { buildingArt } from './buildings'
 import './App.css'
@@ -71,18 +71,18 @@ export type BuildingKey = 'field' | 'refinery' | 'transport' | 'warehouse' | 'ba
 const RESOURCE_LABELS: Record<ResourceType, string> = { oil: 'нафта', fuel: 'паливо', parts: 'деталі' }
 const RESOURCE_ICONS: Record<ResourceType, string> = { oil: '🛢️', fuel: '⛽', parts: '🔧' }
 
-const MAP_SIZE = 7
+const MAP_SIZE = 20
 const TILE_PX = 64
-const FOCUS_ROW = 3.5
-const FOCUS_COL = 3.5
+const FOCUS_ROW = 9.5
+const FOCUS_COL = 9.5
 
 const BUILDING_POSITIONS: Record<BuildingKey, [number, number]> = {
-  field: [3, 2],
-  refinery: [3, 3],
-  transport: [3, 4],
-  warehouse: [2, 3],
-  bank: [4, 3],
-  partsFactory: [4, 4],
+  field: [9, 8],
+  refinery: [9, 9],
+  transport: [9, 10],
+  warehouse: [8, 9],
+  bank: [10, 9],
+  partsFactory: [10, 10],
 }
 const BUILDING_LABELS: Record<BuildingKey, string> = {
   field: 'Родовище',
@@ -260,8 +260,10 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [selectedBuilding, setSelectedBuilding] = useState<BuildingKey | null>(null)
   const [marketOpen, setMarketOpen] = useState(false)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
 
   const initDataRef = useRef<string | null>(null)
+  const dragStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
 
   const addLog = useCallback((message: string) => {
     setLog((prev) => [message, ...prev].slice(0, 6))
@@ -340,6 +342,24 @@ function App() {
     setSelectedBuilding(null)
   }
 
+  function onMapPointerDown(e: ReactPointerEvent) {
+    // Let taps on a building button behave like a normal button — skip
+    // drag-tracking entirely so there's no interference with its click
+    // (this only showed up on real touch devices, not synthetic tests).
+    if ((e.target as HTMLElement).closest('.tile.building')) return
+    dragStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y }
+  }
+
+  function onMapPointerMove(e: ReactPointerEvent) {
+    const start = dragStartRef.current
+    if (!start) return
+    setPan({ x: start.panX + (e.clientX - start.x), y: start.panY + (e.clientY - start.y) })
+  }
+
+  function onMapPointerUp() {
+    dragStartRef.current = null
+  }
+
   function onBuildingClick(key: BuildingKey) {
     setSelectedBuilding(key)
   }
@@ -377,13 +397,15 @@ function App() {
             <div>🔧 {state.player.parts_balance}</div>
           </section>
 
-          <button className="market-open-btn" onClick={() => setMarketOpen(true)}>
-            🏪 Ринок
-          </button>
-
-          <div className="map-viewport">
+          <div
+            className="map-viewport"
+            onPointerDown={onMapPointerDown}
+            onPointerMove={onMapPointerMove}
+            onPointerUp={onMapPointerUp}
+            onPointerLeave={onMapPointerUp}
+          >
             <Mountains />
-            <div className="map-world">
+            <div className="map-world" style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }}>
               <div
                 className="map-grid"
                 style={{
@@ -448,6 +470,9 @@ function App() {
           </div>
 
           <div className="worker-tray">
+            <button className="worker-chip market-chip" title="Ринок" onClick={() => setMarketOpen(true)}>
+              <span className="worker-chip-icon">🏪</span>
+            </button>
             {state.workers.map((w, i) => {
               const busyUntilMs = w.busy_until ? new Date(w.busy_until).getTime() : null
               const secondsLeft = busyUntilMs ? Math.max(0, Math.ceil((busyUntilMs - now) / 1000)) : 0

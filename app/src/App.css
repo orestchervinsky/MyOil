@@ -109,16 +109,21 @@ button:disabled {
   cursor: default;
 }
 
-/* --- Map (isometric, static) --- */
+/* --- Map (isometric, pannable, full-screen) --- */
 
 .map-viewport {
   position: relative;
-  height: 260px;
+  height: 70vh;
   overflow: hidden;
-  margin-bottom: 12px;
+  margin: 0 -14px 12px;
   border: 1px solid var(--border);
-  border-radius: 14px;
   perspective: 1400px;
+  touch-action: none;
+  cursor: grab;
+}
+
+.map-viewport:active {
+  cursor: grabbing;
 }
 
 .map-backdrop {
@@ -132,6 +137,7 @@ button:disabled {
 .map-world {
   position: absolute;
   inset: 0;
+  will-change: transform;
 }
 
 .map-grid {
@@ -360,9 +366,9 @@ button:disabled {
   color: var(--text-dim);
 }
 
-.market-open-btn {
-  width: 100%;
-  margin-bottom: 16px;
+.market-chip {
+  cursor: pointer;
+  border: 2px solid var(--gold-bright);
 }
 
 .market-form {
