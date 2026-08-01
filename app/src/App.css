@@ -360,6 +360,57 @@ button:disabled {
   color: var(--text-dim);
 }
 
+.market-open-btn {
+  width: 100%;
+  margin-bottom: 16px;
+}
+
+.market-form {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.market-form select,
+.market-form input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-tile);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.market-listings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.market-listing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--bg-tile);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.market-listing button {
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
 .log ul {
   list-style: none;
   margin: 0;

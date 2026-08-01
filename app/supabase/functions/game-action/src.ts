@@ -21,6 +21,13 @@ const FUEL_CONVERSION_RATE = 0.6
 const PARTS_MS = 7000
 const PARTS_TOKEN_COST = 50
 const PARTS_PER_PRODUCTION = 5
+const MARKET_COMMISSION = 0.04
+const RESOURCE_BALANCE_COLUMN = {
+  oil: 'oil_balance',
+  fuel: 'fuel_balance',
+  parts: 'parts_balance',
+} as const
+type ResourceType = keyof typeof RESOURCE_BALANCE_COLUMN
 
 function fuelPrice(fuelBalance: number): number {
   const base = 50
@@ -38,7 +45,15 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
   const body = await req.json().catch(() => ({}))
-  const { initData, action, workerId } = body as { initData?: string; action?: string; workerId?: string }
+  const { initData, action, workerId, resourceType, amount: listAmount, pricePerUnit, listingId } = body as {
+    initData?: string
+    action?: string
+    workerId?: string
+    resourceType?: ResourceType
+    amount?: number
+    pricePerUnit?: number
+    listingId?: string
+  }
 
   if (typeof initData !== 'string') return json({ error: 'initData required' }, 400)
 
@@ -278,6 +293,100 @@ Deno.serve(async (req) => {
       parts_produced: PARTS_PER_PRODUCTION,
       collected: false,
     })
+  } else if (action === 'market_list') {
+    if (!resourceType || !RESOURCE_BALANCE_COLUMN[resourceType]) {
+      return json({ error: 'invalid resourceType' }, 400)
+    }
+    if (!listAmount || listAmount <= 0) return json({ error: 'invalid amount' }, 400)
+    if (!pricePerUnit || pricePerUnit <= 0) return json({ error: 'invalid pricePerUnit' }, 400)
+
+    const column = RESOURCE_BALANCE_COLUMN[resourceType]
+    const currentBalance = player[column] as number
+    if (currentBalance < listAmount) return json({ error: 'not enough balance to list' }, 400)
+
+    // Escrow: pull the listed amount out of the seller's balance immediately
+    // so it can't be spent elsewhere while the listing is open.
+    const { data: escrowed } = await supabase
+      .from('players')
+      .update({ [column]: currentBalance - listAmount })
+      .eq('id', player.id)
+      .gte(column, listAmount)
+      .select()
+      .maybeSingle()
+    if (!escrowed) return json({ error: 'not enough balance to list' }, 400)
+    player[column] = escrowed[column]
+
+    await supabase.from('market_listings').insert({
+      seller_id: player.id,
+      resource_type: resourceType,
+      amount: listAmount,
+      price_per_unit: pricePerUnit,
+    })
+  } else if (action === 'market_cancel') {
+    if (!listingId) return json({ error: 'listingId required' }, 400)
+
+    const { data: cancelled } = await supabase
+      .from('market_listings')
+      .update({ status: 'cancelled', closed_at: now.toISOString() })
+      .eq('id', listingId)
+      .eq('seller_id', player.id)
+      .eq('status', 'open')
+      .select()
+      .maybeSingle()
+    if (!cancelled) return json({ error: 'listing not found' }, 400)
+
+    const column = RESOURCE_BALANCE_COLUMN[cancelled.resource_type as ResourceType]
+    await supabase
+      .from('players')
+      .update({ [column]: (player[column] as number) + cancelled.amount })
+      .eq('id', player.id)
+    player[column] = (player[column] as number) + cancelled.amount
+  } else if (action === 'market_buy') {
+    if (!listingId) return json({ error: 'listingId required' }, 400)
+
+    // Atomic claim: only the first buyer to hit this succeeds, closing the
+    // same double-sale race the worker-claim pattern guards against above.
+    const { data: claimedListing } = await supabase
+      .from('market_listings')
+      .update({ status: 'sold', closed_at: now.toISOString() })
+      .eq('id', listingId)
+      .eq('status', 'open')
+      .neq('seller_id', player.id)
+      .select()
+      .maybeSingle()
+    if (!claimedListing) return json({ error: 'listing not available' }, 400)
+
+    const totalCost = claimedListing.amount * claimedListing.price_per_unit
+    if (player.token_balance < totalCost) {
+      // Roll back the claim so the listing isn't stranded as permanently sold.
+      await supabase
+        .from('market_listings')
+        .update({ status: 'open', closed_at: null })
+        .eq('id', listingId)
+      return json({ error: 'not enough tokens' }, 400)
+    }
+
+    const proceeds = Math.round(totalCost * (1 - MARKET_COMMISSION))
+    const column = RESOURCE_BALANCE_COLUMN[claimedListing.resource_type as ResourceType]
+
+    await supabase
+      .from('players')
+      .update({ token_balance: player.token_balance - totalCost, [column]: (player[column] as number) + claimedListing.amount })
+      .eq('id', player.id)
+    player.token_balance -= totalCost
+    player[column] = (player[column] as number) + claimedListing.amount
+
+    const { data: seller } = await supabase
+      .from('players')
+      .select('token_balance')
+      .eq('id', claimedListing.seller_id)
+      .single()
+    if (seller) {
+      await supabase
+        .from('players')
+        .update({ token_balance: seller.token_balance + proceeds })
+        .eq('id', claimedListing.seller_id)
+    }
   } else if (action === 'sell') {
     if (player.fuel_balance <= 0) return json({ error: 'no fuel to sell' }, 400)
     const price = fuelPrice(player.fuel_balance)
@@ -305,6 +414,12 @@ Deno.serve(async (req) => {
     .select('*')
     .eq('owner_id', player.id)
     .single()
+  const { data: marketListings } = await supabase
+    .from('market_listings')
+    .select('id, seller_id, resource_type, amount, price_per_unit, created_at, players(username)')
+    .eq('status', 'open')
+    .order('created_at', { ascending: false })
+    .limit(50)
 
   return json({
     player,
@@ -313,5 +428,6 @@ Deno.serve(async (req) => {
     refinery: freshRefinery,
     transport: freshTransport,
     partsFactory: freshPartsFactory,
+    marketListings,
   })
 })

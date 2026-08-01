@@ -42,6 +42,18 @@ interface DbPlayer {
   parts_balance: number
 }
 
+type ResourceType = 'oil' | 'fuel' | 'parts'
+
+interface MarketListing {
+  id: string
+  seller_id: string
+  resource_type: ResourceType
+  amount: number
+  price_per_unit: number
+  created_at: string
+  players: { username: string | null } | null
+}
+
 interface GameState {
   player: DbPlayer
   workers: DbWorker[]
@@ -49,11 +61,15 @@ interface GameState {
   refinery: DbRefinery
   transport: DbTransport
   partsFactory: DbPartsFactory
+  marketListings: MarketListing[]
 }
 
 type Status = 'not-in-telegram' | 'loading' | 'ready' | 'error'
-type Action = 'sync' | 'extract' | 'transport' | 'refine' | 'produce_parts' | 'sell'
+type Action = 'sync' | 'extract' | 'transport' | 'refine' | 'produce_parts' | 'sell' | 'market_list' | 'market_cancel' | 'market_buy'
 export type BuildingKey = 'field' | 'refinery' | 'transport' | 'warehouse' | 'bank' | 'partsFactory'
+
+const RESOURCE_LABELS: Record<ResourceType, string> = { oil: 'нафта', fuel: 'паливо', parts: 'деталі' }
+const RESOURCE_ICONS: Record<ResourceType, string> = { oil: '🛢️', fuel: '⛽', parts: '🔧' }
 
 const MAP_SIZE = 7
 const TILE_PX = 64
@@ -126,6 +142,115 @@ function Mountains() {
   )
 }
 
+function resourceBalance(player: DbPlayer, type: ResourceType): number {
+  if (type === 'oil') return player.oil_balance
+  if (type === 'fuel') return player.fuel_balance
+  return player.parts_balance
+}
+
+function MarketPanel({
+  state,
+  busy,
+  onClose,
+  onList,
+  onCancel,
+  onBuy,
+}: {
+  state: GameState
+  busy: boolean
+  onClose: () => void
+  onList: (resourceType: ResourceType, amount: number, pricePerUnit: number) => void
+  onCancel: (listingId: string) => void
+  onBuy: (listingId: string) => void
+}) {
+  const [resourceType, setResourceType] = useState<ResourceType>('fuel')
+  const [amount, setAmount] = useState('')
+  const [price, setPrice] = useState('')
+
+  const maxAmount = resourceBalance(state.player, resourceType)
+  const amountNum = Number(amount)
+  const priceNum = Number(price)
+  const canList = amountNum > 0 && amountNum <= maxAmount && priceNum > 0
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h2>🏪 Ринок</h2>
+
+        <p className="modal-hint">Виставити на продаж:</p>
+        <div className="market-form">
+          <select value={resourceType} onChange={(e) => setResourceType(e.target.value as ResourceType)}>
+            <option value="oil">🛢️ нафта</option>
+            <option value="fuel">⛽ паливо</option>
+            <option value="parts">🔧 деталі</option>
+          </select>
+          <input
+            type="number"
+            placeholder="кількість"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            min={1}
+            max={maxAmount}
+          />
+          <input
+            type="number"
+            placeholder="ціна/од."
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            min={1}
+          />
+        </div>
+        <p className="modal-hint">У вас: {maxAmount}</p>
+        <button
+          disabled={busy || !canList}
+          onClick={() => {
+            onList(resourceType, amountNum, priceNum)
+            setAmount('')
+            setPrice('')
+          }}
+        >
+          Виставити
+        </button>
+
+        <p className="modal-hint" style={{ marginTop: 16 }}>
+          Відкриті лоти:
+        </p>
+        <div className="market-listings">
+          {state.marketListings.length === 0 && <p className="warn">Порожньо</p>}
+          {state.marketListings.map((l) => {
+            const isMine = l.seller_id === state.player.id
+            return (
+              <div key={l.id} className="market-listing">
+                <span>
+                  {RESOURCE_ICONS[l.resource_type]} {l.amount} {RESOURCE_LABELS[l.resource_type]} по{' '}
+                  {l.price_per_unit}/од. ({l.amount * l.price_per_unit} токенів) —{' '}
+                  {isMine ? 'ви' : l.players?.username ?? 'гравець'}
+                </span>
+                {isMine ? (
+                  <button disabled={busy} onClick={() => onCancel(l.id)}>
+                    Скасувати
+                  </button>
+                ) : (
+                  <button
+                    disabled={busy || state.player.token_balance < l.amount * l.price_per_unit}
+                    onClick={() => onBuy(l.id)}
+                  >
+                    Купити
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        <button className="modal-close" onClick={onClose}>
+          Закрити
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function App() {
   const [status, setStatus] = useState<Status>('loading')
   const [error, setError] = useState('')
@@ -134,6 +259,7 @@ function App() {
   const [now, setNow] = useState(Date.now())
   const [busy, setBusy] = useState(false)
   const [selectedBuilding, setSelectedBuilding] = useState<BuildingKey | null>(null)
+  const [marketOpen, setMarketOpen] = useState(false)
 
   const initDataRef = useRef<string | null>(null)
 
@@ -142,11 +268,11 @@ function App() {
   }, [])
 
   const callGameAction = useCallback(
-    async (action: Action, workerId?: string) => {
+    async (action: Action, extra?: Record<string, unknown>) => {
       if (!initDataRef.current) return
       setBusy(true)
       const { data, error } = await supabase.functions.invoke('game-action', {
-        body: { initData: initDataRef.current, action, workerId },
+        body: { initData: initDataRef.current, action, ...extra },
       })
       setBusy(false)
       if (error) {
@@ -205,12 +331,12 @@ function App() {
   }, [now, state, busy, callGameAction])
 
   function runOnWorker(action: Action, workerId: string) {
-    callGameAction(action, workerId)
+    callGameAction(action, { workerId })
     setSelectedBuilding(null)
   }
 
   function requestMarket(buildingLabel: string) {
-    addLog(`Заявку на ринок для "${buildingLabel}" ще не реалізовано — скоро.`)
+    addLog(`Ринок праці для "${buildingLabel}" ще не реалізовано. Ринок ресурсів уже є — кнопка "🏪 Ринок" внизу.`)
     setSelectedBuilding(null)
   }
 
@@ -250,6 +376,10 @@ function App() {
             <div>⛽ {state.player.fuel_balance}</div>
             <div>🔧 {state.player.parts_balance}</div>
           </section>
+
+          <button className="market-open-btn" onClick={() => setMarketOpen(true)}>
+            🏪 Ринок
+          </button>
 
           <div className="map-viewport">
             <Mountains />
@@ -459,6 +589,19 @@ function App() {
                 </button>
               </div>
             </div>
+          )}
+
+          {marketOpen && (
+            <MarketPanel
+              state={state}
+              busy={busy}
+              onClose={() => setMarketOpen(false)}
+              onList={(resourceType, amount, pricePerUnit) =>
+                callGameAction('market_list', { resourceType, amount, pricePerUnit })
+              }
+              onCancel={(listingId) => callGameAction('market_cancel', { listingId })}
+              onBuy={(listingId) => callGameAction('market_buy', { listingId })}
+            />
           )}
         </>
       )}
